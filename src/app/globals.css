@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+  --background: #faf8fc;
+  --foreground: #1f1330;
+
+  /* FinFree brand palette */
+  --color-royal-purple: #5b2a86;
+  --color-royal-purple-dark: #3f1d61;
+  --color-royal-purple-light: #7a4bab;
+  --color-money-green: #1faa59;
+  --color-money-green-dark: #158243;
+  --color-money-green-light: #4fc986;
+  --color-rich-gold: #c89b2c;
+  --color-rich-gold-dark: #9c7620;
+  --color-rich-gold-light: #e0be5f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-royal-purple: var(--color-royal-purple);
+  --color-royal-purple-dark: var(--color-royal-purple-dark);
+  --color-royal-purple-light: var(--color-royal-purple-light);
+  --color-money-green: var(--color-money-green);
+  --color-money-green-dark: var(--color-money-green-dark);
+  --color-money-green-light: var(--color-money-green-light);
+  --color-rich-gold: var(--color-rich-gold);
+  --color-rich-gold-dark: var(--color-rich-gold-dark);
+  --color-rich-gold-light: var(--color-rich-gold-light);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
