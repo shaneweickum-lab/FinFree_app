@@ -80,6 +80,8 @@ export function computeStatementForPeriod(progress: UserProgress, periodStart: n
   const periodLedgerDelta = progress.finCoinLedger
     .filter((e) => e.timestamp > periodStart && e.timestamp <= periodEnd)
     .reduce((sum, e) => sum + e.amount, 0);
+  const periodSavingsEntries = progress.savingsLedger.filter((e) => e.timestamp > periodStart && e.timestamp <= periodEnd);
+  const periodSavingsDelta = periodSavingsEntries.reduce((sum, e) => sum + e.amount, 0);
 
   const loggedTradeIds = new Set(progress.ledgerEntries.map((e) => e.tradeId));
   const tradesLogged = periodTrades.filter((t) => loggedTradeIds.has(t.id)).length;
@@ -104,6 +106,10 @@ export function computeStatementForPeriod(progress: UserProgress, periodStart: n
     tradesMissed,
     recordkeepingPointsDelta: pointsEarnedThisPeriod - pointsLostThisPeriod,
     pointsLostThisPeriod,
+    openingSavingsBalance: progress.savingsBalance - periodSavingsDelta,
+    closingSavingsBalance: progress.savingsBalance,
+    savingsDeposits: periodSavingsEntries.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0),
+    savingsWithdrawals: periodSavingsEntries.filter((e) => e.amount < 0).reduce((sum, e) => sum - e.amount, 0),
   };
 }
 
