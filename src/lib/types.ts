@@ -113,6 +113,60 @@ export interface TradeRecord {
   timestamp: number;
   /** Only set for stop-loss buys; lets the AI Tutor's trade quality model score how well downside was protected. */
   stopPrice?: number;
+  /** Fin Coin balance immediately after this trade — the ground truth the Trade Ledger grades
+   * "resulting cash balance" entries against, since finCoinBalance also moves from unrelated
+   * lesson/quiz rewards and can't be reconstructed after the fact. */
+  balanceAfter: number;
+  /** Sell trades only: (execution price - avg cost at the time of sale) * quantity. */
+  realizedPnL?: number;
+}
+
+/** The four classifications a Trade Ledger entry can be filed under — a simplified mapping onto
+ * the curriculum's own vocabulary: buying acquires an asset (Module 2), selling generates revenue
+ * (Module 1's own definition of "money earned from sales"). */
+export type LedgerCategory = "asset" | "revenue" | "expense" | "liability";
+
+export const LEDGER_CATEGORY_LABELS: Record<LedgerCategory, string> = {
+  asset: "Asset",
+  revenue: "Revenue",
+  expense: "Expense",
+  liability: "Liability",
+};
+
+/** One manually-filled row of the Trade Ledger, logging a single trade after the fact. Grading is
+ * per-field so a partially-correct entry still earns partial credit. */
+export interface LedgerEntry {
+  id: string;
+  tradeId: string;
+  loggedAt: number;
+  enteredTotalAmount: number;
+  enteredCashBalanceAfter: number;
+  enteredCategory: LedgerCategory;
+  totalAmountCorrect: boolean;
+  cashBalanceCorrect: boolean;
+  categoryCorrect: boolean;
+  pointsAwarded: number;
+}
+
+/** A periodic (auto every 24h, or on-demand) summary of Trading Floor activity, modeled loosely on
+ * a real brokerage/bank statement — itself a small financial-literacy lesson in what such a
+ * statement actually reports. */
+export interface BankStatement {
+  id: string;
+  periodStart: number;
+  periodEnd: number;
+  generatedAt: number;
+  manual: boolean;
+  openingFinCoinBalance: number;
+  closingFinCoinBalance: number;
+  tradesExecuted: number;
+  buys: number;
+  sells: number;
+  realizedPnL: number;
+  tradesLogged: number;
+  tradesMissed: number;
+  recordkeepingPointsDelta: number;
+  recordkeepingScoreAfter: number;
 }
 
 export interface UserProgress {
@@ -127,6 +181,16 @@ export interface UserProgress {
   tradeHistory: TradeRecord[];
   /** High-water mark, kept even if portfolio value later drops, so trading-level achievements stay earned. */
   highestTradingLevel: number;
+  /** Starts at 50 (not 0) so a slow start recording trades doesn't immediately read as a failing
+   * score — see recordkeeping.ts for the full scoring rationale. */
+  recordkeepingScore: number;
+  /** High-water mark, kept even if a later missed-trade penalty drops the live score — so, like
+   * highestTradingLevel, recordkeeping achievements stay earned once reached. */
+  highestRecordkeepingScore: number;
+  ledgerEntries: LedgerEntry[];
+  bankStatements: BankStatement[];
+  /** 0 until the Trade Ledger page has been visited once; see recordkeeping.ts's shouldAutoGenerateStatement. */
+  lastStatementAt: number;
 }
 
 export type LiteracyLevel = "none" | "a-little" | "beginner" | "intermediate-refreshing" | "expert-refreshing";

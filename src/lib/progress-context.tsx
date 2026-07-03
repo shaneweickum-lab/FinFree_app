@@ -17,8 +17,9 @@ import {
   getLessonsByModule,
 } from "./content";
 import { computePortfolioValue, computeTradingLevel } from "./trading-levels";
+import { computeStatementForPeriod, gradeLedgerEntry, RECORDKEEPING_BASELINE, type LedgerEntryInput } from "./recordkeeping";
 import type { TickerState } from "./market";
-import type { Lesson, OrderKind, QuizAttemptRecord, TradeRecord, TradeSide, UserProgress } from "./types";
+import type { BankStatement, Lesson, LedgerEntry, OrderKind, QuizAttemptRecord, TradeRecord, TradeSide, UserProgress } from "./types";
 
 const EMPTY_PROGRESS: UserProgress = {
   completedLessonIds: [],
@@ -32,6 +33,11 @@ const EMPTY_PROGRESS: UserProgress = {
   positions: [],
   tradeHistory: [],
   highestTradingLevel: 1,
+  recordkeepingScore: RECORDKEEPING_BASELINE,
+  highestRecordkeepingScore: RECORDKEEPING_BASELINE,
+  ledgerEntries: [],
+  bankStatements: [],
+  lastStatementAt: 0,
 };
 
 interface QuizSubmissionResult {
@@ -66,6 +72,8 @@ interface ProgressContextValue {
     execPrice: number,
     stopPrice?: number,
   ) => TradeResult;
+  logLedgerEntry: (tradeId: string, entered: LedgerEntryInput) => LedgerEntry | null;
+  generateBankStatement: (manual: boolean) => BankStatement | null;
   resetProgress: () => void;
 }
 
@@ -302,6 +310,8 @@ export function ProgressProvider({ username, children }: { username: string; chi
           positions: [...prev.positions],
         };
 
+        let realizedPnL: number | undefined;
+
         if (side === "buy") {
           awardFinCoin(draft, -Math.round(cost), `Bought ${quantity} ${symbol}`);
           if (!existingPosition) {
@@ -312,6 +322,8 @@ export function ProgressProvider({ username, children }: { username: string; chi
             draft.positions = draft.positions.map((p) => (p.symbol === symbol ? { ...p, quantity: totalQty, avgCost } : p));
           }
         } else {
+          // existingPosition is guaranteed here by the guard above.
+          realizedPnL = (execPrice - existingPosition!.avgCost) * quantity;
           awardFinCoin(draft, Math.round(cost), `Sold ${quantity} ${symbol}`);
           draft.positions = draft.positions
             .map((p) => (p.symbol === symbol ? { ...p, quantity: p.quantity - quantity } : p))
@@ -326,10 +338,19 @@ export function ProgressProvider({ username, children }: { username: string; chi
           quantity,
           price: execPrice,
           timestamp: Date.now(),
+          balanceAfter: draft.finCoinBalance,
           ...(stopPrice !== undefined ? { stopPrice } : {}),
+          ...(realizedPnL !== undefined ? { realizedPnL } : {}),
         };
         draft.tradeHistory = [newTrade, ...prev.tradeHistory];
         result = { success: true, trade: newTrade };
+
+        // The statement clock starts at the first trade, not whenever the Trade Ledger page
+        // happens to first be visited — otherwise any trades made before that first visit would
+        // fall before every statement's period and could never be logged or counted as missed.
+        if (draft.lastStatementAt === 0) {
+          draft.lastStatementAt = newTrade.timestamp - 1;
+        }
 
         const portfolioValue = computePortfolioValue(draft.finCoinBalance, draft.positions, tickers);
         draft.highestTradingLevel = Math.max(draft.highestTradingLevel, computeTradingLevel(portfolioValue).level);
@@ -341,6 +362,72 @@ export function ProgressProvider({ username, children }: { username: string; chi
     },
     [awardFinCoin],
   );
+
+  /** Grades and files one Trade Ledger row. A trade can only be logged once — resubmitting an
+   * already-logged trade is a no-op, so there's no way to game the score by re-grading an entry
+   * after seeing the result. */
+  const logLedgerEntry = useCallback((tradeId: string, entered: LedgerEntryInput): LedgerEntry | null => {
+    let created: LedgerEntry | null = null;
+    setProgress((prev) => {
+      if (prev.ledgerEntries.some((e) => e.tradeId === tradeId)) return prev;
+      const trade = prev.tradeHistory.find((t) => t.id === tradeId);
+      if (!trade) return prev;
+
+      const graded = gradeLedgerEntry(trade, entered);
+      const entry: LedgerEntry = { id: nextId("ledger"), tradeId, loggedAt: Date.now(), ...graded };
+      created = entry;
+      const recordkeepingScore = prev.recordkeepingScore + graded.pointsAwarded;
+
+      return {
+        ...prev,
+        ledgerEntries: [...prev.ledgerEntries, entry],
+        recordkeepingScore,
+        highestRecordkeepingScore: Math.max(prev.highestRecordkeepingScore, recordkeepingScore),
+      };
+    });
+    return created;
+  }, []);
+
+  /** Closes out the period since the last statement (or since the clock was started, for the
+   * first one), applying the missed-trade penalty for anything left unlogged. Used both by the
+   * 24h auto-check and the "Generate Statement Now" button — the only difference is `manual`. */
+  const generateBankStatement = useCallback((manual: boolean): BankStatement | null => {
+    let created: BankStatement | null = null;
+    setProgress((prev) => {
+      if (!prev.lastStatementAt) return prev;
+      const now = Date.now();
+      const draft = computeStatementForPeriod(prev, prev.lastStatementAt, now, manual);
+      const recordkeepingScoreAfter = Math.max(0, prev.recordkeepingScore - draft.pointsLostThisPeriod);
+
+      const statement: BankStatement = {
+        id: nextId("statement"),
+        generatedAt: now,
+        recordkeepingScoreAfter,
+        periodStart: draft.periodStart,
+        periodEnd: draft.periodEnd,
+        manual: draft.manual,
+        openingFinCoinBalance: draft.openingFinCoinBalance,
+        closingFinCoinBalance: draft.closingFinCoinBalance,
+        tradesExecuted: draft.tradesExecuted,
+        buys: draft.buys,
+        sells: draft.sells,
+        realizedPnL: draft.realizedPnL,
+        tradesLogged: draft.tradesLogged,
+        tradesMissed: draft.tradesMissed,
+        recordkeepingPointsDelta: draft.recordkeepingPointsDelta,
+      };
+      created = statement;
+
+      return {
+        ...prev,
+        bankStatements: [statement, ...prev.bankStatements],
+        recordkeepingScore: recordkeepingScoreAfter,
+        highestRecordkeepingScore: Math.max(prev.highestRecordkeepingScore, recordkeepingScoreAfter),
+        lastStatementAt: now,
+      };
+    });
+    return created;
+  }, []);
 
   const resetProgress = useCallback(() => {
     setProgress(EMPTY_PROGRESS);
@@ -358,6 +445,8 @@ export function ProgressProvider({ username, children }: { username: string; chi
       recordTradingSession,
       adjustFinCoin,
       executeTrade,
+      logLedgerEntry,
+      generateBankStatement,
       resetProgress,
     }),
     [
@@ -371,6 +460,8 @@ export function ProgressProvider({ username, children }: { username: string; chi
       recordTradingSession,
       adjustFinCoin,
       executeTrade,
+      logLedgerEntry,
+      generateBankStatement,
       resetProgress,
     ],
   );

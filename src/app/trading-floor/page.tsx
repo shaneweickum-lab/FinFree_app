@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useProgress } from "@/lib/progress-context";
 import { useTutor } from "@/lib/tutor-context";
 import { computeAdaptiveDifficulty } from "@/lib/adaptive";
@@ -189,7 +190,15 @@ export default function TradingFloorPage() {
           </div>
 
           <div className="mt-6">
-            <h2 className="mb-2 font-bold text-royal-purple-dark">Trade History</h2>
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="font-bold text-royal-purple-dark">Trade History</h2>
+              <Link
+                href="/trade-ledger"
+                className="rounded-full bg-royal-purple/10 px-3 py-1 text-xs font-semibold text-royal-purple-dark hover:bg-royal-purple/20"
+              >
+                📒 Log in Trade Ledger
+              </Link>
+            </div>
             {progress.tradeHistory.length === 0 ? (
               <p className="text-sm text-foreground/50">No trades yet — your journal starts here.</p>
             ) : (

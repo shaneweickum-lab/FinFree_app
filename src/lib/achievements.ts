@@ -5,7 +5,7 @@ export interface AchievementContext {
   profile: UserProfile;
 }
 
-export type AchievementCategory = "onboarding" | "learning" | "coins" | "trading";
+export type AchievementCategory = "onboarding" | "learning" | "coins" | "trading" | "recordkeeping";
 
 export interface AchievementDef {
   id: string;
@@ -168,6 +168,46 @@ const ACHIEVEMENT_DEFS: AchievementDef[] = [
     icon: "🏆",
     category: "trading",
     isUnlocked: ({ progress }) => progress.highestTradingLevel >= 100,
+  },
+  {
+    id: "recordkeeping-60",
+    title: "Bookkeeper",
+    description: "Raise your Recordkeeping Score to 60 by logging trades in the Trade Ledger.",
+    icon: "📒",
+    category: "recordkeeping",
+    isUnlocked: ({ progress }) => progress.highestRecordkeepingScore >= 60,
+  },
+  {
+    id: "recordkeeping-70",
+    title: "Meticulous",
+    description: "Raise your Recordkeeping Score to 70.",
+    icon: "🔍",
+    category: "recordkeeping",
+    isUnlocked: ({ progress }) => progress.highestRecordkeepingScore >= 70,
+  },
+  {
+    id: "recordkeeping-80",
+    title: "Ledger Master",
+    description: "Raise your Recordkeeping Score to 80.",
+    icon: "📚",
+    category: "recordkeeping",
+    isUnlocked: ({ progress }) => progress.highestRecordkeepingScore >= 80,
+  },
+  {
+    id: "recordkeeping-90",
+    title: "Audit-Ready",
+    description: "Raise your Recordkeeping Score to 90.",
+    icon: "✅",
+    category: "recordkeeping",
+    isUnlocked: ({ progress }) => progress.highestRecordkeepingScore >= 90,
+  },
+  {
+    id: "recordkeeping-100",
+    title: "CFO-in-Training",
+    description: "Raise your Recordkeeping Score to 100.",
+    icon: "💼",
+    category: "recordkeeping",
+    isUnlocked: ({ progress }) => progress.highestRecordkeepingScore >= 100,
   },
 ];
 
