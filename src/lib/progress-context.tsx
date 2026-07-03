@@ -18,7 +18,7 @@ import {
 } from "./content";
 import { computePortfolioValue, computeTradingLevel } from "./trading-levels";
 import type { TickerState } from "./market";
-import type { Lesson, OrderKind, QuizAttemptRecord, TradeSide, UserProgress } from "./types";
+import type { Lesson, OrderKind, QuizAttemptRecord, TradeRecord, TradeSide, UserProgress } from "./types";
 
 const EMPTY_PROGRESS: UserProgress = {
   completedLessonIds: [],
@@ -44,6 +44,7 @@ interface QuizSubmissionResult {
 interface TradeResult {
   success: boolean;
   message?: string;
+  trade?: TradeRecord;
 }
 
 interface ProgressContextValue {
@@ -53,6 +54,7 @@ interface ProgressContextValue {
   isModuleComplete: (moduleId: string) => boolean;
   completeLesson: (lesson: Lesson) => void;
   submitQuiz: (lesson: Lesson, answers: number[]) => QuizSubmissionResult;
+  recordAdHocQuizAnswer: (concept: string, correct: boolean, meta: { lessonId: string; moduleId: string; quizId: string }) => void;
   recordTradingSession: () => void;
   adjustFinCoin: (amount: number, reason: string) => void;
   executeTrade: (
@@ -62,6 +64,7 @@ interface ProgressContextValue {
     orderKind: OrderKind,
     quantity: number,
     execPrice: number,
+    stopPrice?: number,
   ) => TradeResult;
   resetProgress: () => void;
 }
@@ -229,6 +232,26 @@ export function ProgressProvider({ username, children }: { username: string; chi
     [awardFinCoin, finalizeModuleAndCourseState],
   );
 
+  /** Records a single AI Tutor pop-quiz answer as a one-question attempt, so it feeds the same
+   * concept-mastery and adaptive-difficulty tracking as regular lesson quizzes. */
+  const recordAdHocQuizAnswer = useCallback(
+    (concept: string, correct: boolean, meta: { lessonId: string; moduleId: string; quizId: string }) => {
+      setProgress((prev) => {
+        const attempt: QuizAttemptRecord = {
+          quizId: meta.quizId,
+          lessonId: meta.lessonId,
+          moduleId: meta.moduleId,
+          score: correct ? 1 : 0,
+          passed: correct,
+          conceptResults: [{ concept, correct }],
+          timestamp: Date.now(),
+        };
+        return { ...prev, quizAttempts: [...prev.quizAttempts, attempt] };
+      });
+    },
+    [],
+  );
+
   const recordTradingSession = useCallback(() => {
     setProgress((prev) => ({
       ...prev,
@@ -256,6 +279,7 @@ export function ProgressProvider({ username, children }: { username: string; chi
       orderKind: OrderKind,
       quantity: number,
       execPrice: number,
+      stopPrice?: number,
     ): TradeResult => {
       const cost = execPrice * quantity;
       let result: TradeResult = { success: true };
@@ -294,18 +318,18 @@ export function ProgressProvider({ username, children }: { username: string; chi
             .filter((p) => p.quantity > 0);
         }
 
-        draft.tradeHistory = [
-          {
-            id: nextId("trade"),
-            symbol,
-            side,
-            orderKind,
-            quantity,
-            price: execPrice,
-            timestamp: Date.now(),
-          },
-          ...prev.tradeHistory,
-        ];
+        const newTrade: TradeRecord = {
+          id: nextId("trade"),
+          symbol,
+          side,
+          orderKind,
+          quantity,
+          price: execPrice,
+          timestamp: Date.now(),
+          ...(stopPrice !== undefined ? { stopPrice } : {}),
+        };
+        draft.tradeHistory = [newTrade, ...prev.tradeHistory];
+        result = { success: true, trade: newTrade };
 
         const portfolioValue = computePortfolioValue(draft.finCoinBalance, draft.positions, tickers);
         draft.highestTradingLevel = Math.max(draft.highestTradingLevel, computeTradingLevel(portfolioValue).level);
@@ -330,6 +354,7 @@ export function ProgressProvider({ username, children }: { username: string; chi
       isModuleComplete,
       completeLesson,
       submitQuiz,
+      recordAdHocQuizAnswer,
       recordTradingSession,
       adjustFinCoin,
       executeTrade,
@@ -342,6 +367,7 @@ export function ProgressProvider({ username, children }: { username: string; chi
       isModuleComplete,
       completeLesson,
       submitQuiz,
+      recordAdHocQuizAnswer,
       recordTradingSession,
       adjustFinCoin,
       executeTrade,

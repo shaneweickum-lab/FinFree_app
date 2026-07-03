@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useProgress } from "@/lib/progress-context";
+import { useTutor } from "@/lib/tutor-context";
 import { computeAdaptiveDifficulty } from "@/lib/adaptive";
 import { advanceMarket, getBidAsk, initializeMarket, type TickerState } from "@/lib/market";
 import { computePortfolioValue, computeTradingLevel, formatCompactCoins, MAX_TRADING_LEVEL } from "@/lib/trading-levels";
+import { buildBuyTradeContext, buildSellTradeContext } from "@/lib/tutor/trade-quality";
 import type { OrderKind, TradeSide } from "@/lib/types";
 import { ProgressBar } from "@/components/progress-bar";
+import { TickerSparkline } from "@/components/ticker-sparkline";
+import { TickerDetailChart } from "@/components/ticker-detail-chart";
 
 const DIFFICULTY_COPY: Record<string, { label: string; blurb: string }> = {
   calm: { label: "Calm", blurb: "Clear patterns, low volatility — a gentle place to start." },
@@ -15,16 +19,28 @@ const DIFFICULTY_COPY: Record<string, { label: string; blurb: string }> = {
   chaotic: { label: "Chaotic", blurb: "Tight spreads, wild moves — this is the deep end." },
 };
 
+const AUTO_TICK_INTERVAL_MS = 5 * 60 * 1000;
+
 export default function TradingFloorPage() {
   const { progress, hydrated, recordTradingSession, executeTrade } = useProgress();
+  const { recordBuyTradeForCritique, recordSellTradeForCritique } = useTutor();
 
   const [tickers, setTickers] = useState<TickerState[]>(() => initializeMarket());
   const [selectedSymbol, setSelectedSymbol] = useState(tickers[0]?.symbol ?? "");
   const [orderKind, setOrderKind] = useState<OrderKind>("market");
   const [quantity, setQuantity] = useState(1);
+  const [stopPrice, setStopPrice] = useState("");
   const [tradeError, setTradeError] = useState<string | null>(null);
 
   const difficulty = computeAdaptiveDifficulty(progress);
+
+  // Simulates a real market ticking on its own — prices move every 5 minutes without user action.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTickers((prev) => advanceMarket(prev, difficulty.volatility, Math.random));
+    }, AUTO_TICK_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [difficulty.volatility]);
 
   if (!hydrated) return null;
 
@@ -41,8 +57,21 @@ export default function TradingFloorPage() {
 
   function handleTrade(side: TradeSide) {
     const execPrice = side === "buy" ? ask : bid;
-    const result = executeTrade(tickers, selectedTicker.symbol, side, orderKind, quantity, execPrice);
-    setTradeError(result.success ? null : (result.message ?? null));
+    const parsedStopPrice = orderKind === "stop-loss" && stopPrice ? Number(stopPrice) : undefined;
+
+    if (side === "buy") {
+      const buyContext = buildBuyTradeContext(progress, tickers, selectedTicker.symbol, quantity, execPrice, orderKind, parsedStopPrice);
+      const result = executeTrade(tickers, selectedTicker.symbol, side, orderKind, quantity, execPrice, parsedStopPrice);
+      setTradeError(result.success ? null : (result.message ?? null));
+      if (result.success && result.trade) recordBuyTradeForCritique(result.trade, buyContext);
+    } else {
+      const result = executeTrade(tickers, selectedTicker.symbol, side, orderKind, quantity, execPrice);
+      setTradeError(result.success ? null : (result.message ?? null));
+      if (result.success && result.trade) {
+        const sellContext = buildSellTradeContext(progress, selectedTicker.symbol, quantity, execPrice, result.trade.timestamp);
+        recordSellTradeForCritique(result.trade, sellContext);
+      }
+    }
   }
 
   const difficultyCopy = DIFFICULTY_COPY[difficulty.level];
@@ -113,15 +142,18 @@ export default function TradingFloorPage() {
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="font-bold text-royal-purple-dark">Ticker Tape</h2>
+            <div>
+              <h2 className="font-bold text-royal-purple-dark">Ticker Tape</h2>
+              <p className="text-xs text-foreground/50">Prices tick automatically every 5 minutes.</p>
+            </div>
             <button
               onClick={handleAdvanceMarket}
               className="rounded-full bg-royal-purple px-4 py-1.5 text-xs font-semibold text-white"
             >
-              ▶ Advance Market
+              ▶ Advance Now
             </button>
           </div>
-          <div className="space-y-2">
+          <div className="max-h-[30rem] space-y-2 overflow-y-auto pr-1">
             {tickers.map((ticker) => {
               const change = ticker.price - ticker.previousPrice;
               const up = change >= 0;
@@ -129,16 +161,24 @@ export default function TradingFloorPage() {
                 <button
                   key={ticker.symbol}
                   onClick={() => setSelectedSymbol(ticker.symbol)}
-                  className={`flex w-full items-center justify-between rounded-xl border-2 bg-white px-4 py-3 text-left text-sm transition ${
+                  className={`flex w-full items-center justify-between gap-3 rounded-xl border-2 bg-white px-4 py-3 text-left text-sm transition ${
                     ticker.symbol === selectedTicker.symbol ? "border-royal-purple" : "border-transparent hover:border-royal-purple/30"
                   }`}
                 >
-                  <div>
-                    <span className="font-bold text-royal-purple-dark">{ticker.symbol}</span>
-                    <span className="ml-2 text-foreground/50">{ticker.name}</span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-royal-purple-dark">{ticker.symbol}</span>
+                      <span className="rounded-full bg-royal-purple/10 px-2 py-0.5 text-[10px] font-semibold text-royal-purple">
+                        {ticker.sector}
+                      </span>
+                    </div>
+                    <span className="truncate text-foreground/50">{ticker.name}</span>
                   </div>
-                  <div className="text-right">
-                    <div className="font-semibold">${ticker.price.toFixed(2)}</div>
+                  <div className={up ? "text-money-green-dark" : "text-red-600"}>
+                    <TickerSparkline values={ticker.priceHistory} />
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="font-semibold text-foreground">${ticker.price.toFixed(2)}</div>
                     <div className={up ? "text-money-green-dark" : "text-red-600"}>
                       {up ? "▲" : "▼"} {Math.abs(change).toFixed(2)}
                     </div>
@@ -169,14 +209,33 @@ export default function TradingFloorPage() {
 
         <div className="space-y-4">
           <div className="rounded-2xl border-2 border-royal-purple/15 bg-white p-4">
-            <h2 className="font-bold text-royal-purple-dark">{selectedTicker.symbol} Order Ticket</h2>
-            <div className="mt-2 flex justify-between text-sm">
-              <span className="text-foreground/60">Bid</span>
-              <span className="font-semibold">${bid.toFixed(2)}</span>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-royal-purple-dark">{selectedTicker.symbol}</h2>
+              <span className="text-xs font-semibold text-foreground/50">{selectedTicker.sector}</span>
             </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-foreground/60">Ask</span>
-              <span className="font-semibold">${ask.toFixed(2)}</span>
+            <p className="text-xs text-foreground/50">{selectedTicker.name}</p>
+
+            <div className="mt-2 text-royal-purple-dark">
+              <TickerDetailChart values={selectedTicker.priceHistory} dayHigh={selectedTicker.dayHigh} dayLow={selectedTicker.dayLow} />
+            </div>
+
+            <div className="mt-2 grid grid-cols-2 gap-x-4 text-sm">
+              <div className="flex justify-between">
+                <span className="text-foreground/60">Bid</span>
+                <span className="font-semibold">${bid.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-foreground/60">Ask</span>
+                <span className="font-semibold">${ask.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-foreground/60">Day High</span>
+                <span className="font-semibold text-money-green-dark">${selectedTicker.dayHigh.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-foreground/60">Day Low</span>
+                <span className="font-semibold text-red-600">${selectedTicker.dayLow.toFixed(2)}</span>
+              </div>
             </div>
 
             <label className="mt-3 block text-xs font-semibold text-foreground/60">Order Type</label>
@@ -189,6 +248,23 @@ export default function TradingFloorPage() {
               <option value="limit">Limit</option>
               <option value="stop-loss">Stop-Loss</option>
             </select>
+
+            {orderKind === "stop-loss" && (
+              <>
+                <label className="mt-3 block text-xs font-semibold text-foreground/60">
+                  Stop Price (buy orders only)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={stopPrice}
+                  onChange={(e) => setStopPrice(e.target.value)}
+                  placeholder={`e.g. ${(ask * 0.95).toFixed(2)}`}
+                  className="mt-1 w-full rounded-lg border border-black/10 px-2 py-1.5 text-sm"
+                />
+              </>
+            )}
 
             <label className="mt-3 block text-xs font-semibold text-foreground/60">Quantity</label>
             <input

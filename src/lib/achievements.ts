@@ -154,12 +154,20 @@ const ACHIEVEMENT_DEFS: AchievementDef[] = [
     isUnlocked: ({ progress }) => progress.highestTradingLevel >= 20,
   },
   {
-    id: "trading-level-30",
+    id: "trading-level-50",
+    title: "Trading Level 50",
+    description: "Reach Trading Floor level 50.",
+    icon: "🎖️",
+    category: "trading",
+    isUnlocked: ({ progress }) => progress.highestTradingLevel >= 50,
+  },
+  {
+    id: "trading-level-100",
     title: "Trading Legend",
-    description: "Reach the maximum Trading Floor level, 30.",
+    description: "Reach the maximum Trading Floor level, 100.",
     icon: "🏆",
     category: "trading",
-    isUnlocked: ({ progress }) => progress.highestTradingLevel >= 30,
+    isUnlocked: ({ progress }) => progress.highestTradingLevel >= 100,
   },
 ];
 

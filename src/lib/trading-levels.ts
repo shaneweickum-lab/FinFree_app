@@ -1,11 +1,12 @@
 import type { TickerState } from "./market";
 import type { Position } from "./types";
 
-export const MAX_TRADING_LEVEL = 30;
+export const MAX_TRADING_LEVEL = 100;
 const LEVEL_1_GOAL = 10_000;
-const LEVEL_GROWTH = 2.5;
+// 10^(7/99): the exact per-level multiplier that lands on a $100B goal at level 100 (~17.68% per level).
+const LEVEL_GROWTH = 10 ** (7 / 99);
 
-/** Portfolio value needed to reach `level` (1-indexed): level 1 = 10,000, each level 2.5x the previous. */
+/** Portfolio value needed to reach `level` (1-indexed): level 1 = 10,000, ~17.68% growth per level up to $100B at level 100. */
 export function goalForLevel(level: number): number {
   return LEVEL_1_GOAL * LEVEL_GROWTH ** (level - 1);
 }
