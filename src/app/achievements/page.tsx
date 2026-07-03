@@ -10,9 +10,10 @@ const CATEGORY_LABELS: Record<AchievementCategory, string> = {
   learning: "Learning",
   coins: "Fin Coin",
   trading: "Trading Floor",
+  recordkeeping: "Recordkeeping",
 };
 
-const CATEGORY_ORDER: AchievementCategory[] = ["onboarding", "learning", "coins", "trading"];
+const CATEGORY_ORDER: AchievementCategory[] = ["onboarding", "learning", "coins", "trading", "recordkeeping"];
 
 export default function AchievementsPage() {
   const { progress, hydrated: progressHydrated } = useProgress();

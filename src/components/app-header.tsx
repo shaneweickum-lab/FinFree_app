@@ -3,16 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FinCoinBadge } from "./fin-coin-badge";
+import { RecordkeepingBadge } from "./recordkeeping-badge";
 import { useProgress } from "@/lib/progress-context";
 import { useAuth } from "@/lib/auth-context";
 
 const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/trading-floor", label: "Trading Floor" },
+  { href: "/trade-ledger", label: "Trade Ledger" },
   { href: "/achievements", label: "Achievements" },
   { href: "/analytics", label: "Analytics" },
   { href: "/profile", label: "Profile" },
 ];
+
+const LOCKED_UNTIL_TRADING_FLOOR = new Set(["/trading-floor", "/trade-ledger"]);
 
 export function AppHeader() {
   const pathname = usePathname();
@@ -29,8 +33,7 @@ export function AppHeader() {
 
         <nav className="flex flex-wrap items-center gap-1 text-sm">
           {NAV_LINKS.map((link) => {
-            const isTradingFloor = link.href === "/trading-floor";
-            const locked = isTradingFloor && hydrated && !progress.tradingFloorUnlocked;
+            const locked = LOCKED_UNTIL_TRADING_FLOOR.has(link.href) && hydrated && !progress.tradingFloorUnlocked;
             const active = pathname === link.href;
             return (
               <Link
@@ -49,6 +52,7 @@ export function AppHeader() {
 
         <div className="flex items-center gap-3">
           <FinCoinBadge />
+          <RecordkeepingBadge />
           <span className="hidden text-xs text-white/70 sm:inline">{username}</span>
           <button
             onClick={logout}
