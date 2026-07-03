@@ -27,6 +27,8 @@ const EMPTY_PROGRESS: UserProgress = {
   quizAttempts: [],
   finCoinBalance: 0,
   finCoinLedger: [],
+  savingsBalance: 0,
+  savingsLedger: [],
   // Unlocked by default for now so the Trading Floor can be worked on without clearing all 7 modules first.
   tradingFloorUnlocked: true,
   tradingSessionsCompleted: 0,
@@ -53,6 +55,11 @@ interface TradeResult {
   trade?: TradeRecord;
 }
 
+interface TransferResult {
+  success: boolean;
+  message?: string;
+}
+
 interface ProgressContextValue {
   progress: UserProgress;
   hydrated: boolean;
@@ -74,6 +81,8 @@ interface ProgressContextValue {
   ) => TradeResult;
   logLedgerEntry: (tradeId: string, entered: LedgerEntryInput) => LedgerEntry | null;
   generateBankStatement: (manual: boolean) => BankStatement | null;
+  depositToSavings: (amount: number) => TransferResult;
+  withdrawFromSavings: (amount: number) => TransferResult;
   resetProgress: () => void;
 }
 
@@ -83,6 +92,17 @@ let ledgerIdCounter = 0;
 function nextId(prefix: string) {
   ledgerIdCounter += 1;
   return `${prefix}-${ledgerIdCounter}-${Math.floor(performance.now())}`;
+}
+
+/** The statement clock starts at whichever Fin Coin Bank activity — a trade, a deposit, a
+ * withdrawal — happens first, not whenever the Trade Ledger page happens to first be visited.
+ * Otherwise activity before that first visit would fall before every statement's period and could
+ * never be logged or counted as missed. `eventTimestamp - 1` keeps the triggering event itself
+ * strictly inside the resulting period (periods are filtered with `> periodStart`). */
+function startStatementClockIfNeeded(draft: UserProgress, eventTimestamp: number) {
+  if (draft.lastStatementAt === 0) {
+    draft.lastStatementAt = eventTimestamp - 1;
+  }
 }
 
 export function ProgressProvider({ username, children }: { username: string; children: ReactNode }) {
@@ -279,6 +299,54 @@ export function ProgressProvider({ username, children }: { username: string; chi
     [awardFinCoin],
   );
 
+  /** Moves Fin Coin from checking to savings. Recorded on both ledgers — as a negative checking
+   * entry and a positive savings entry — so bank statements can report the transfer on either side
+   * without any special-casing beyond summing each ledger for the period. */
+  const depositToSavings = useCallback(
+    (amount: number): TransferResult => {
+      if (amount <= 0) return { success: false, message: "Enter an amount greater than zero." };
+      let result: TransferResult = { success: true };
+      setProgress((prev) => {
+        if (prev.finCoinBalance < amount) {
+          result = { success: false, message: "Not enough in checking to deposit that much." };
+          return prev;
+        }
+        const draft: UserProgress = { ...prev, finCoinLedger: [...prev.finCoinLedger], savingsLedger: [...prev.savingsLedger] };
+        const timestamp = Date.now();
+        awardFinCoin(draft, -amount, "Transferred to Savings");
+        draft.savingsBalance = prev.savingsBalance + amount;
+        draft.savingsLedger.push({ id: nextId("sv"), amount, reason: "Deposit from Checking", timestamp });
+        startStatementClockIfNeeded(draft, timestamp);
+        return draft;
+      });
+      return result;
+    },
+    [awardFinCoin],
+  );
+
+  /** The mirror image of depositToSavings — moves Fin Coin from savings back to checking. */
+  const withdrawFromSavings = useCallback(
+    (amount: number): TransferResult => {
+      if (amount <= 0) return { success: false, message: "Enter an amount greater than zero." };
+      let result: TransferResult = { success: true };
+      setProgress((prev) => {
+        if (prev.savingsBalance < amount) {
+          result = { success: false, message: "Not enough in savings to withdraw that much." };
+          return prev;
+        }
+        const draft: UserProgress = { ...prev, finCoinLedger: [...prev.finCoinLedger], savingsLedger: [...prev.savingsLedger] };
+        const timestamp = Date.now();
+        awardFinCoin(draft, amount, "Transferred from Savings");
+        draft.savingsBalance = prev.savingsBalance - amount;
+        draft.savingsLedger.push({ id: nextId("sv"), amount: -amount, reason: "Withdrawal to Checking", timestamp });
+        startStatementClockIfNeeded(draft, timestamp);
+        return draft;
+      });
+      return result;
+    },
+    [awardFinCoin],
+  );
+
   const executeTrade = useCallback(
     (
       tickers: TickerState[],
@@ -345,12 +413,7 @@ export function ProgressProvider({ username, children }: { username: string; chi
         draft.tradeHistory = [newTrade, ...prev.tradeHistory];
         result = { success: true, trade: newTrade };
 
-        // The statement clock starts at the first trade, not whenever the Trade Ledger page
-        // happens to first be visited — otherwise any trades made before that first visit would
-        // fall before every statement's period and could never be logged or counted as missed.
-        if (draft.lastStatementAt === 0) {
-          draft.lastStatementAt = newTrade.timestamp - 1;
-        }
+        startStatementClockIfNeeded(draft, newTrade.timestamp);
 
         const portfolioValue = computePortfolioValue(draft.finCoinBalance, draft.positions, tickers);
         draft.highestTradingLevel = Math.max(draft.highestTradingLevel, computeTradingLevel(portfolioValue).level);
@@ -415,6 +478,10 @@ export function ProgressProvider({ username, children }: { username: string; chi
         tradesLogged: draft.tradesLogged,
         tradesMissed: draft.tradesMissed,
         recordkeepingPointsDelta: draft.recordkeepingPointsDelta,
+        openingSavingsBalance: draft.openingSavingsBalance,
+        closingSavingsBalance: draft.closingSavingsBalance,
+        savingsDeposits: draft.savingsDeposits,
+        savingsWithdrawals: draft.savingsWithdrawals,
       };
       created = statement;
 
@@ -447,6 +514,8 @@ export function ProgressProvider({ username, children }: { username: string; chi
       executeTrade,
       logLedgerEntry,
       generateBankStatement,
+      depositToSavings,
+      withdrawFromSavings,
       resetProgress,
     }),
     [
@@ -462,6 +531,8 @@ export function ProgressProvider({ username, children }: { username: string; chi
       executeTrade,
       logLedgerEntry,
       generateBankStatement,
+      depositToSavings,
+      withdrawFromSavings,
       resetProgress,
     ],
   );

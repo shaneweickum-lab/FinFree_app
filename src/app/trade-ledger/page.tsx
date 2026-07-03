@@ -219,7 +219,7 @@ export default function TradeLedgerPage() {
         <p className="mt-1 text-xs text-foreground/50">
           {msUntilNextStatement !== null
             ? `Next automatic statement in about ${fmtDuration(msUntilNextStatement)}, or generate one now.`
-            : "Statements start once you've made your first trade."}
+            : "Statements start once you've made your first trade or Fin Coin Bank transaction."}
         </p>
 
         {progress.bankStatements.length === 0 ? (
@@ -244,6 +244,12 @@ export default function TradeLedgerPage() {
                     Recordkeeping: {s.recordkeepingPointsDelta >= 0 ? "+" : ""}
                     {s.recordkeepingPointsDelta} (now {s.recordkeepingScoreAfter})
                   </span>
+                  {(s.savingsDeposits > 0 || s.savingsWithdrawals > 0) && (
+                    <span className="col-span-full">
+                      Savings: {fmt(s.openingSavingsBalance)} → {fmt(s.closingSavingsBalance)} 🪙 (+{fmt(s.savingsDeposits)}{" "}
+                      deposited, −{fmt(s.savingsWithdrawals)} withdrawn)
+                    </span>
+                  )}
                 </div>
               </div>
             ))}

@@ -167,6 +167,10 @@ export interface BankStatement {
   tradesMissed: number;
   recordkeepingPointsDelta: number;
   recordkeepingScoreAfter: number;
+  openingSavingsBalance: number;
+  closingSavingsBalance: number;
+  savingsDeposits: number;
+  savingsWithdrawals: number;
 }
 
 export interface UserProgress {
@@ -175,6 +179,10 @@ export interface UserProgress {
   quizAttempts: QuizAttemptRecord[];
   finCoinBalance: number;
   finCoinLedger: FinCoinLedgerEntry[];
+  /** The Fin Coin Bank's savings account — a separate balance moved to/from the checking balance
+   * (finCoinBalance) above via depositToSavings/withdrawFromSavings, not a second currency. */
+  savingsBalance: number;
+  savingsLedger: FinCoinLedgerEntry[];
   tradingFloorUnlocked: boolean;
   tradingSessionsCompleted: number;
   positions: Position[];
