@@ -7,7 +7,7 @@ import { useProgress } from "@/lib/progress-context";
 import { useProfile } from "@/lib/profile-context";
 import { useTutor } from "@/lib/tutor-context";
 import { createAimlBot } from "@/lib/tutor/aiml-engine";
-import { TUTOR_CATEGORIES } from "@/lib/tutor/knowledge-base";
+import { TUTOR_CATEGORIES, buildQuizAssistanceMessage } from "@/lib/tutor/knowledge-base";
 import { getQuizGateState } from "@/lib/tutor/quiz-gate";
 
 const NO_CHEATING_REPLIES = [
@@ -21,6 +21,8 @@ interface ChatMessage {
   text: string;
   /** Set when this reply also sent the user somewhere, so the bubble can say where it took them. */
   navigateLabel?: string;
+  /** Present on the Assisted Mode offer bubble until the user accepts or declines it. */
+  quizHelpOffer?: { quizId: string };
 }
 
 const SUGGESTED_QUESTIONS = ["What is a stop-loss?", "What's my Fin Coin balance?", "How am I doing?", "What is EBITDA?"];
@@ -86,8 +88,9 @@ export function TutorChat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open]);
 
-  // Once a quiz has stumped the user enough times, the tutor stops refusing and offers to help —
-  // announced on its own rather than waiting for the user to ask again.
+  // Assisted Mode: once a quiz has stumped the user enough times (Strict Mode's flat refusal no
+  // longer applies), the tutor pops the offer up on its own, in place — it never navigates the
+  // user away from the quiz screen to do it.
   useEffect(() => {
     if (!quizGate || quizGate.blocked) return;
     if (announcedQuizIdsRef.current.has(quizGate.quizId)) return;
@@ -98,11 +101,20 @@ export function TutorChat() {
       {
         id: nextMessageId(),
         role: "bot",
-        text: `Looks like "${quizGate.lessonTitle}" is giving you some trouble. Would you like some assistance? Ask me anything about it.`,
+        text: `Looks like "${quizGate.lessonTitle}" is giving you some trouble. Would you like some assistance?`,
+        quizHelpOffer: { quizId: quizGate.quizId },
       },
     ]);
     setOpen(true);
   }, [quizGate]);
+
+  function resolveQuizOffer(messageId: string, quizId: string, accepted: boolean) {
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, quizHelpOffer: undefined } : m)));
+    const reply = accepted
+      ? buildQuizAssistanceMessage(quizId, progress)
+      : "No worries — I'm still here if you change your mind. Just ask me anything.";
+    setMessages((prev) => [...prev, { id: nextMessageId(), role: "bot", text: reply }]);
+  }
 
   function ask(text: string) {
     const trimmed = text.trim();
@@ -162,12 +174,28 @@ export function TutorChat() {
             {messages.map((m) => (
               <div
                 key={m.id}
-                className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+                className={`max-w-[85%] whitespace-pre-line rounded-xl px-3 py-2 text-sm ${
                   m.role === "user" ? "ml-auto bg-royal-purple text-white" : "bg-royal-purple/10 text-foreground"
                 }`}
               >
                 {m.text}
                 {m.navigateLabel && <p className="mt-1 text-xs italic opacity-70">📍 Opened {m.navigateLabel}</p>}
+                {m.quizHelpOffer && (
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => resolveQuizOffer(m.id, m.quizHelpOffer!.quizId, true)}
+                      className="rounded-full bg-money-green px-3 py-1 text-xs font-semibold text-white"
+                    >
+                      Yes, help me
+                    </button>
+                    <button
+                      onClick={() => resolveQuizOffer(m.id, m.quizHelpOffer!.quizId, false)}
+                      className="rounded-full border border-royal-purple/30 px-3 py-1 text-xs font-semibold text-royal-purple-dark"
+                    >
+                      No thanks
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

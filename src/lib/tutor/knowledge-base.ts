@@ -5,7 +5,7 @@ import { MODULES } from "../content";
 import { LITERACY_LEVEL_LABELS } from "../types";
 import type { UserProfile, UserProgress } from "../types";
 import type { TradeCritique } from "./trade-quality";
-import { findGlossaryNavTarget } from "./content-lookup";
+import { findGlossaryNavTarget, findGlossaryKeyForConcept, findReviewLesson } from "./content-lookup";
 
 export interface TutorChatContext {
   progress: UserProgress;
@@ -93,6 +93,37 @@ function lookupGlossaryNav(rawTerm: string): NavTarget | null {
 
 function formatCoin(n: number): string {
   return new Intl.NumberFormat("en-US").format(Math.round(n));
+}
+
+/** The AI Tutor's "Assisted Mode" explainer — the piece constrained to teach the underlying
+ * concept without ever stating or implying which quiz choice is correct. That constraint is
+ * structural, not just a prompt instruction: this only ever pulls from the same generic
+ * glossary/lesson text used everywhere else in the chat, which has no notion of a specific quiz
+ * question's answer choices to leak in the first place. */
+function explainConcept(concept: string): string | null {
+  const glossaryKey = findGlossaryKeyForConcept(concept);
+  if (glossaryKey && GLOSSARY[glossaryKey]) return GLOSSARY[glossaryKey];
+
+  const review = findReviewLesson(concept);
+  if (!review) return null;
+  return `That's covered in "${review.lessonTitle}" — worth a re-read before your next attempt.`;
+}
+
+/** Builds the reply shown when the user accepts an Assisted Mode offer: one explanation per
+ * concept they got wrong on their most recent failed attempt at `quizId`. */
+export function buildQuizAssistanceMessage(quizId: string, progress: UserProgress): string {
+  const failedAttempts = progress.quizAttempts.filter((a) => a.quizId === quizId && !a.passed);
+  const latest = failedAttempts[failedAttempts.length - 1];
+  const fallback = "Let's talk through the material — ask me about any term from the lesson you're unsure of.";
+  if (!latest) return fallback;
+
+  const missedConcepts = Array.from(new Set(latest.conceptResults.filter((r) => !r.correct).map((r) => r.concept)));
+  const explanations = missedConcepts.map(explainConcept).filter((e): e is string => Boolean(e));
+  if (explanations.length === 0) return fallback;
+
+  const intro = "I won't hand you the answer, but let's go over what tripped you up:";
+  const outro = "Think it through with that in mind, then give the quiz another shot.";
+  return [intro, ...explanations.map((e) => `• ${e}`), outro].join("\n\n");
 }
 
 export const TUTOR_CATEGORIES: AimlCategory<TutorChatContext>[] = [
