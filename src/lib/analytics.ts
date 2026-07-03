@@ -1,6 +1,6 @@
 import { MODULES } from "./content";
 import { computeOverallMasteryScore, computeConceptMastery } from "./adaptive";
-import { computePortfolioValue, computeTradingLevel } from "./trading-levels";
+import { computePortfolioValue, computeTradingLevel, MAX_TRADING_LEVEL } from "./trading-levels";
 import type { TickerState } from "./market";
 import type { UserProfile, UserProgress } from "./types";
 
@@ -52,6 +52,8 @@ export interface TradingStats {
   winRate: number | null;
   level: number;
   portfolioValue: number;
+  /** Positive = current win streak length, negative = current loss streak length, 0 = no decided trades yet. */
+  currentStreak: number;
 }
 
 /**
@@ -63,6 +65,7 @@ export function computeTradingStats(progress: UserProgress, tickers: TickerState
   const runningAvgCost = new Map<string, { qty: number; avgCost: number }>();
   let wins = 0;
   let losses = 0;
+  let currentStreak = 0;
 
   for (const trade of chronological) {
     const existing = runningAvgCost.get(trade.symbol);
@@ -75,8 +78,13 @@ export function computeTradingStats(progress: UserProgress, tickers: TickerState
         runningAvgCost.set(trade.symbol, { qty: totalQty, avgCost });
       }
     } else if (existing) {
-      if (trade.price >= existing.avgCost) wins += 1;
-      else losses += 1;
+      if (trade.price >= existing.avgCost) {
+        wins += 1;
+        currentStreak = currentStreak > 0 ? currentStreak + 1 : 1;
+      } else {
+        losses += 1;
+        currentStreak = currentStreak < 0 ? currentStreak - 1 : -1;
+      }
       runningAvgCost.set(trade.symbol, { qty: Math.max(0, existing.qty - trade.quantity), avgCost: existing.avgCost });
     }
   }
@@ -91,6 +99,7 @@ export function computeTradingStats(progress: UserProgress, tickers: TickerState
     winRate: decidedTrades === 0 ? null : wins / decidedTrades,
     level: computeTradingLevel(portfolioValue).level,
     portfolioValue,
+    currentStreak,
   };
 }
 
@@ -124,7 +133,7 @@ export function computeGrowthScore(progress: UserProgress, profile: UserProfile,
   const learningScore = progress.completedModuleIds.length / MODULES.length;
   const masteryScore = computeOverallMasteryScore(progress);
   const tradingStats = computeTradingStats(progress, tickers);
-  const tradingScore = Math.min(1, computeTradingLevel(tradingStats.portfolioValue).level / 15);
+  const tradingScore = Math.min(1, computeTradingLevel(tradingStats.portfolioValue).level / (MAX_TRADING_LEVEL / 2));
   const onboardingScore = profile.onboardingBonusAwarded ? 1 : 0;
 
   const weighted =

@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useProgress } from "@/lib/progress-context";
+import { useTutor } from "@/lib/tutor-context";
 import { computeAdaptiveDifficulty } from "@/lib/adaptive";
 import { advanceMarket, getBidAsk, initializeMarket, type TickerState } from "@/lib/market";
 import { computePortfolioValue, computeTradingLevel, formatCompactCoins, MAX_TRADING_LEVEL } from "@/lib/trading-levels";
+import { buildBuyTradeContext, buildSellTradeContext } from "@/lib/tutor/trade-quality";
 import type { OrderKind, TradeSide } from "@/lib/types";
 import { ProgressBar } from "@/components/progress-bar";
 
@@ -17,11 +19,13 @@ const DIFFICULTY_COPY: Record<string, { label: string; blurb: string }> = {
 
 export default function TradingFloorPage() {
   const { progress, hydrated, recordTradingSession, executeTrade } = useProgress();
+  const { recordBuyTradeForCritique, recordSellTradeForCritique } = useTutor();
 
   const [tickers, setTickers] = useState<TickerState[]>(() => initializeMarket());
   const [selectedSymbol, setSelectedSymbol] = useState(tickers[0]?.symbol ?? "");
   const [orderKind, setOrderKind] = useState<OrderKind>("market");
   const [quantity, setQuantity] = useState(1);
+  const [stopPrice, setStopPrice] = useState("");
   const [tradeError, setTradeError] = useState<string | null>(null);
 
   const difficulty = computeAdaptiveDifficulty(progress);
@@ -41,8 +45,21 @@ export default function TradingFloorPage() {
 
   function handleTrade(side: TradeSide) {
     const execPrice = side === "buy" ? ask : bid;
-    const result = executeTrade(tickers, selectedTicker.symbol, side, orderKind, quantity, execPrice);
-    setTradeError(result.success ? null : (result.message ?? null));
+    const parsedStopPrice = orderKind === "stop-loss" && stopPrice ? Number(stopPrice) : undefined;
+
+    if (side === "buy") {
+      const buyContext = buildBuyTradeContext(progress, tickers, selectedTicker.symbol, quantity, execPrice, orderKind, parsedStopPrice);
+      const result = executeTrade(tickers, selectedTicker.symbol, side, orderKind, quantity, execPrice, parsedStopPrice);
+      setTradeError(result.success ? null : (result.message ?? null));
+      if (result.success && result.trade) recordBuyTradeForCritique(result.trade, buyContext);
+    } else {
+      const result = executeTrade(tickers, selectedTicker.symbol, side, orderKind, quantity, execPrice);
+      setTradeError(result.success ? null : (result.message ?? null));
+      if (result.success && result.trade) {
+        const sellContext = buildSellTradeContext(progress, selectedTicker.symbol, quantity, execPrice, result.trade.timestamp);
+        recordSellTradeForCritique(result.trade, sellContext);
+      }
+    }
   }
 
   const difficultyCopy = DIFFICULTY_COPY[difficulty.level];
@@ -189,6 +206,23 @@ export default function TradingFloorPage() {
               <option value="limit">Limit</option>
               <option value="stop-loss">Stop-Loss</option>
             </select>
+
+            {orderKind === "stop-loss" && (
+              <>
+                <label className="mt-3 block text-xs font-semibold text-foreground/60">
+                  Stop Price (buy orders only)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={stopPrice}
+                  onChange={(e) => setStopPrice(e.target.value)}
+                  placeholder={`e.g. ${(ask * 0.95).toFixed(2)}`}
+                  className="mt-1 w-full rounded-lg border border-black/10 px-2 py-1.5 text-sm"
+                />
+              </>
+            )}
 
             <label className="mt-3 block text-xs font-semibold text-foreground/60">Quantity</label>
             <input

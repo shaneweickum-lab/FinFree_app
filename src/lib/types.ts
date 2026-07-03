@@ -111,6 +111,8 @@ export interface TradeRecord {
   quantity: number;
   price: number;
   timestamp: number;
+  /** Only set for stop-loss buys; lets the AI Tutor's trade quality model score how well downside was protected. */
+  stopPrice?: number;
 }
 
 export interface UserProgress {

@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { AccountGate } from "@/components/account-gate";
 import { AppHeader } from "@/components/app-header";
+import { TutorNudge } from "@/components/tutor-nudge";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -36,6 +37,7 @@ export default function RootLayout({
           <AccountGate>
             <AppHeader />
             <main className="flex-1">{children}</main>
+            <TutorNudge />
           </AccountGate>
         </AuthProvider>
       </body>
