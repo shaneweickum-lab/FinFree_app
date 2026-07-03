@@ -16,9 +16,9 @@ import {
   QUIZ_HIGH_SCORE_THRESHOLD,
   getLessonsByModule,
 } from "./content";
-import type { Lesson, QuizAttemptRecord, UserProgress } from "./types";
-
-const STORAGE_KEY = "finfree.progress.v1";
+import { computePortfolioValue, computeTradingLevel } from "./trading-levels";
+import type { TickerState } from "./market";
+import type { Lesson, OrderKind, QuizAttemptRecord, TradeSide, UserProgress } from "./types";
 
 const EMPTY_PROGRESS: UserProgress = {
   completedLessonIds: [],
@@ -26,8 +26,12 @@ const EMPTY_PROGRESS: UserProgress = {
   quizAttempts: [],
   finCoinBalance: 0,
   finCoinLedger: [],
-  tradingFloorUnlocked: false,
+  // Unlocked by default for now so the Trading Floor can be worked on without clearing all 7 modules first.
+  tradingFloorUnlocked: true,
   tradingSessionsCompleted: 0,
+  positions: [],
+  tradeHistory: [],
+  highestTradingLevel: 1,
 };
 
 interface QuizSubmissionResult {
@@ -35,6 +39,11 @@ interface QuizSubmissionResult {
   passed: boolean;
   correctCount: number;
   totalCount: number;
+}
+
+interface TradeResult {
+  success: boolean;
+  message?: string;
 }
 
 interface ProgressContextValue {
@@ -46,6 +55,14 @@ interface ProgressContextValue {
   submitQuiz: (lesson: Lesson, answers: number[]) => QuizSubmissionResult;
   recordTradingSession: () => void;
   adjustFinCoin: (amount: number, reason: string) => void;
+  executeTrade: (
+    tickers: TickerState[],
+    symbol: string,
+    side: TradeSide,
+    orderKind: OrderKind,
+    quantity: number,
+    execPrice: number,
+  ) => TradeResult;
   resetProgress: () => void;
 }
 
@@ -57,7 +74,8 @@ function nextId(prefix: string) {
   return `${prefix}-${ledgerIdCounter}-${Math.floor(performance.now())}`;
 }
 
-export function ProgressProvider({ children }: { children: ReactNode }) {
+export function ProgressProvider({ username, children }: { username: string; children: ReactNode }) {
+  const storageKey = `finfree.progress.v1.${username.toLowerCase()}`;
   const [progress, setProgress] = useState<UserProgress>(EMPTY_PROGRESS);
   const [hydrated, setHydrated] = useState(false);
 
@@ -66,22 +84,25 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     // (both start from EMPTY_PROGRESS), so the real value is applied here rather than as
     // useState's initializer, which would cause a hydration mismatch.
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const raw = window.localStorage.getItem(storageKey);
       if (raw) {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setProgress({ ...EMPTY_PROGRESS, ...JSON.parse(raw) });
+      } else {
+        setProgress(EMPTY_PROGRESS);
       }
     } catch {
-      // corrupted or inaccessible storage — fall back to empty progress
+      setProgress(EMPTY_PROGRESS);
     } finally {
       setHydrated(true);
     }
-  }, []);
+    // Re-run whenever the logged-in account changes so switching accounts loads that account's data.
+  }, [storageKey]);
 
   useEffect(() => {
     if (!hydrated) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
-  }, [progress, hydrated]);
+    window.localStorage.setItem(storageKey, JSON.stringify(progress));
+  }, [progress, hydrated, storageKey]);
 
   const isLessonComplete = useCallback(
     (lessonId: string) => progress.completedLessonIds.includes(lessonId),
@@ -227,6 +248,76 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     [awardFinCoin],
   );
 
+  const executeTrade = useCallback(
+    (
+      tickers: TickerState[],
+      symbol: string,
+      side: TradeSide,
+      orderKind: OrderKind,
+      quantity: number,
+      execPrice: number,
+    ): TradeResult => {
+      const cost = execPrice * quantity;
+      let result: TradeResult = { success: true };
+
+      setProgress((prev) => {
+        const existingPosition = prev.positions.find((p) => p.symbol === symbol);
+
+        if (side === "buy" && prev.finCoinBalance < cost) {
+          result = { success: false, message: "Not enough Fin Coin for this order." };
+          return prev;
+        }
+        if (side === "sell" && (!existingPosition || existingPosition.quantity < quantity)) {
+          result = { success: false, message: "Not enough shares to sell." };
+          return prev;
+        }
+
+        const draft: UserProgress = {
+          ...prev,
+          finCoinLedger: [...prev.finCoinLedger],
+          positions: [...prev.positions],
+        };
+
+        if (side === "buy") {
+          awardFinCoin(draft, -Math.round(cost), `Bought ${quantity} ${symbol}`);
+          if (!existingPosition) {
+            draft.positions.push({ symbol, quantity, avgCost: execPrice });
+          } else {
+            const totalQty = existingPosition.quantity + quantity;
+            const avgCost = (existingPosition.avgCost * existingPosition.quantity + cost) / totalQty;
+            draft.positions = draft.positions.map((p) => (p.symbol === symbol ? { ...p, quantity: totalQty, avgCost } : p));
+          }
+        } else {
+          awardFinCoin(draft, Math.round(cost), `Sold ${quantity} ${symbol}`);
+          draft.positions = draft.positions
+            .map((p) => (p.symbol === symbol ? { ...p, quantity: p.quantity - quantity } : p))
+            .filter((p) => p.quantity > 0);
+        }
+
+        draft.tradeHistory = [
+          {
+            id: nextId("trade"),
+            symbol,
+            side,
+            orderKind,
+            quantity,
+            price: execPrice,
+            timestamp: Date.now(),
+          },
+          ...prev.tradeHistory,
+        ];
+
+        const portfolioValue = computePortfolioValue(draft.finCoinBalance, draft.positions, tickers);
+        draft.highestTradingLevel = Math.max(draft.highestTradingLevel, computeTradingLevel(portfolioValue).level);
+
+        return draft;
+      });
+
+      return result;
+    },
+    [awardFinCoin],
+  );
+
   const resetProgress = useCallback(() => {
     setProgress(EMPTY_PROGRESS);
   }, []);
@@ -241,6 +332,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       submitQuiz,
       recordTradingSession,
       adjustFinCoin,
+      executeTrade,
       resetProgress,
     }),
     [
@@ -252,6 +344,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       submitQuiz,
       recordTradingSession,
       adjustFinCoin,
+      executeTrade,
       resetProgress,
     ],
   );

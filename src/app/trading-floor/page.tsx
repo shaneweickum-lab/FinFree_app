@@ -1,22 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useState } from "react";
 import { useProgress } from "@/lib/progress-context";
 import { computeAdaptiveDifficulty } from "@/lib/adaptive";
-import {
-  advanceMarket,
-  getBidAsk,
-  initializeMarket,
-  type OrderKind,
-  type Position,
-  type TickerState,
-  type TradeRecord,
-  type TradeSide,
-} from "@/lib/market";
+import { advanceMarket, getBidAsk, initializeMarket, type TickerState } from "@/lib/market";
+import { computePortfolioValue, computeTradingLevel, formatCompactCoins, MAX_TRADING_LEVEL } from "@/lib/trading-levels";
+import type { OrderKind, TradeSide } from "@/lib/types";
 import { ProgressBar } from "@/components/progress-bar";
-
-const TRADING_STORAGE_KEY = "finfree.tradingFloor.v1";
 
 const DIFFICULTY_COPY: Record<string, { label: string; blurb: string }> = {
   calm: { label: "Calm", blurb: "Clear patterns, low volatility — a gentle place to start." },
@@ -25,67 +15,25 @@ const DIFFICULTY_COPY: Record<string, { label: string; blurb: string }> = {
   chaotic: { label: "Chaotic", blurb: "Tight spreads, wild moves — this is the deep end." },
 };
 
-let tradeIdCounter = 0;
-function nextTradeId() {
-  tradeIdCounter += 1;
-  return `trade-${tradeIdCounter}-${Math.floor(performance.now())}`;
-}
-
 export default function TradingFloorPage() {
-  const { progress, hydrated, adjustFinCoin, recordTradingSession } = useProgress();
+  const { progress, hydrated, recordTradingSession, executeTrade } = useProgress();
 
   const [tickers, setTickers] = useState<TickerState[]>(() => initializeMarket());
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [history, setHistory] = useState<TradeRecord[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState(tickers[0]?.symbol ?? "");
   const [orderKind, setOrderKind] = useState<OrderKind>("market");
   const [quantity, setQuantity] = useState(1);
-  const [loadedLocal, setLoadedLocal] = useState(false);
+  const [tradeError, setTradeError] = useState<string | null>(null);
 
   const difficulty = computeAdaptiveDifficulty(progress);
 
-  useEffect(() => {
-    // One-time load on mount, mirroring the same hydration pattern as ProgressProvider.
-    try {
-      const raw = window.localStorage.getItem(TRADING_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (parsed.positions) setPositions(parsed.positions);
-        if (parsed.history) setHistory(parsed.history);
-      }
-    } catch {
-      // ignore corrupted local trading state
-    } finally {
-      setLoadedLocal(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!loadedLocal) return;
-    window.localStorage.setItem(TRADING_STORAGE_KEY, JSON.stringify({ positions, history }));
-  }, [positions, history, loadedLocal]);
-
   if (!hydrated) return null;
-
-  if (!progress.tradingFloorUnlocked) {
-    return (
-      <div className="mx-auto max-w-2xl px-4 py-16 text-center">
-        <p className="text-4xl">🏛️🔒</p>
-        <h1 className="mt-4 text-xl font-bold text-royal-purple-dark">The Trading Floor is still under construction</h1>
-        <p className="mt-2 text-foreground/60">
-          Complete all seven modules of Building Your Financial House to unlock the capstone simulation.
-        </p>
-        <Link href="/" className="mt-6 inline-block rounded-full bg-royal-purple px-5 py-2 text-sm font-semibold text-white">
-          Back to Dashboard
-        </Link>
-      </div>
-    );
-  }
 
   const selectedTicker = tickers.find((t) => t.symbol === selectedSymbol) ?? tickers[0];
   const { bid, ask } = getBidAsk(selectedTicker.price, difficulty.spreadTightness);
-  const position = positions.find((p) => p.symbol === selectedTicker.symbol);
+  const position = progress.positions.find((p) => p.symbol === selectedTicker.symbol);
+
+  const portfolioValue = computePortfolioValue(progress.finCoinBalance, progress.positions, tickers);
+  const levelInfo = computeTradingLevel(portfolioValue);
 
   function handleAdvanceMarket() {
     setTickers((prev) => advanceMarket(prev, difficulty.volatility, Math.random));
@@ -93,42 +41,8 @@ export default function TradingFloorPage() {
 
   function handleTrade(side: TradeSide) {
     const execPrice = side === "buy" ? ask : bid;
-    const cost = execPrice * quantity;
-
-    if (side === "buy") {
-      if (progress.finCoinBalance < cost) return;
-      adjustFinCoin(-Math.round(cost), `Bought ${quantity} ${selectedTicker.symbol}`);
-      setPositions((prev) => {
-        const existing = prev.find((p) => p.symbol === selectedTicker.symbol);
-        if (!existing) {
-          return [...prev, { symbol: selectedTicker.symbol, quantity, avgCost: execPrice }];
-        }
-        const totalQty = existing.quantity + quantity;
-        const avgCost = (existing.avgCost * existing.quantity + cost) / totalQty;
-        return prev.map((p) => (p.symbol === selectedTicker.symbol ? { ...p, quantity: totalQty, avgCost } : p));
-      });
-    } else {
-      if (!position || position.quantity < quantity) return;
-      adjustFinCoin(Math.round(cost), `Sold ${quantity} ${selectedTicker.symbol}`);
-      setPositions((prev) =>
-        prev
-          .map((p) => (p.symbol === selectedTicker.symbol ? { ...p, quantity: p.quantity - quantity } : p))
-          .filter((p) => p.quantity > 0),
-      );
-    }
-
-    setHistory((prev) => [
-      {
-        id: nextTradeId(),
-        symbol: selectedTicker.symbol,
-        side,
-        orderKind,
-        quantity,
-        price: execPrice,
-        timestamp: Date.now(),
-      },
-      ...prev,
-    ]);
+    const result = executeTrade(tickers, selectedTicker.symbol, side, orderKind, quantity, execPrice);
+    setTradeError(result.success ? null : (result.message ?? null));
   }
 
   const difficultyCopy = DIFFICULTY_COPY[difficulty.level];
@@ -146,6 +60,26 @@ export default function TradingFloorPage() {
         >
           End Session ({progress.tradingSessionsCompleted} completed)
         </button>
+      </div>
+
+      <div className="mt-4 rounded-2xl bg-gradient-to-br from-rich-gold/20 to-rich-gold/5 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm font-bold text-rich-gold-dark">
+            Trading Level {levelInfo.level}
+            {levelInfo.isMaxLevel ? " (Max)" : ` of ${MAX_TRADING_LEVEL}`}
+          </span>
+          <span className="text-xs text-foreground/60">
+            Portfolio: {formatCompactCoins(levelInfo.portfolioValue)} 🪙
+          </span>
+        </div>
+        <div className="mt-2">
+          <ProgressBar fraction={levelInfo.progressFraction} colorClass="bg-rich-gold" />
+        </div>
+        <p className="mt-1 text-xs text-foreground/60">
+          {levelInfo.isMaxLevel
+            ? "You've reached the top trading level."
+            : `${formatCompactCoins(levelInfo.goal - levelInfo.portfolioValue)} 🪙 to Level ${levelInfo.level + 1} (goal: ${formatCompactCoins(levelInfo.goal)})`}
+        </p>
       </div>
 
       <div className="mt-4 rounded-2xl bg-royal-purple/5 p-4">
@@ -216,11 +150,11 @@ export default function TradingFloorPage() {
 
           <div className="mt-6">
             <h2 className="mb-2 font-bold text-royal-purple-dark">Trade History</h2>
-            {history.length === 0 ? (
+            {progress.tradeHistory.length === 0 ? (
               <p className="text-sm text-foreground/50">No trades yet — your journal starts here.</p>
             ) : (
               <div className="space-y-1.5 text-sm">
-                {history.slice(0, 10).map((trade) => (
+                {progress.tradeHistory.slice(0, 10).map((trade) => (
                   <div key={trade.id} className="flex justify-between rounded-lg bg-white px-3 py-2 shadow-sm">
                     <span>
                       {trade.side === "buy" ? "🟢 Bought" : "🔴 Sold"} {trade.quantity} {trade.symbol}
@@ -281,16 +215,17 @@ export default function TradingFloorPage() {
                 Sell
               </button>
             </div>
+            {tradeError && <p className="mt-2 text-center text-xs font-medium text-red-600">{tradeError}</p>}
             <p className="mt-2 text-center text-xs text-foreground/50">Balance: {progress.finCoinBalance} 🪙</p>
           </div>
 
           <div className="rounded-2xl border-2 border-royal-purple/15 bg-white p-4">
             <h2 className="font-bold text-royal-purple-dark">Positions</h2>
-            {positions.length === 0 ? (
+            {progress.positions.length === 0 ? (
               <p className="mt-2 text-sm text-foreground/50">No open positions.</p>
             ) : (
               <div className="mt-2 space-y-2 text-sm">
-                {positions.map((p) => (
+                {progress.positions.map((p) => (
                   <div key={p.symbol} className="flex justify-between">
                     <span className="font-semibold">{p.symbol}</span>
                     <span className="text-foreground/60">
