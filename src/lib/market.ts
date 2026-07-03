@@ -12,25 +12,6 @@ export interface TickerState {
   priceHistory: number[];
 }
 
-export interface Position {
-  symbol: string;
-  quantity: number;
-  avgCost: number;
-}
-
-export type TradeSide = "buy" | "sell";
-export type OrderKind = "market" | "limit" | "stop-loss";
-
-export interface TradeRecord {
-  id: string;
-  symbol: string;
-  side: TradeSide;
-  orderKind: OrderKind;
-  quantity: number;
-  price: number;
-  timestamp: number;
-}
-
 export const TICKER_SEEDS: TickerSeed[] = [
   { symbol: "BRWG", name: "Brightwing Foods Co.", startPrice: 42 },
   { symbol: "NRGX", name: "Nova Renewable Grid", startPrice: 88 },

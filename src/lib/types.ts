@@ -94,6 +94,25 @@ export interface FinCoinLedgerEntry {
   timestamp: number;
 }
 
+export type TradeSide = "buy" | "sell";
+export type OrderKind = "market" | "limit" | "stop-loss";
+
+export interface Position {
+  symbol: string;
+  quantity: number;
+  avgCost: number;
+}
+
+export interface TradeRecord {
+  id: string;
+  symbol: string;
+  side: TradeSide;
+  orderKind: OrderKind;
+  quantity: number;
+  price: number;
+  timestamp: number;
+}
+
 export interface UserProgress {
   completedLessonIds: string[];
   completedModuleIds: string[];
@@ -102,6 +121,50 @@ export interface UserProgress {
   finCoinLedger: FinCoinLedgerEntry[];
   tradingFloorUnlocked: boolean;
   tradingSessionsCompleted: number;
+  positions: Position[];
+  tradeHistory: TradeRecord[];
+  /** High-water mark, kept even if portfolio value later drops, so trading-level achievements stay earned. */
+  highestTradingLevel: number;
+}
+
+export type LiteracyLevel = "none" | "a-little" | "beginner" | "intermediate-refreshing" | "expert-refreshing";
+
+export const LITERACY_LEVEL_LABELS: Record<LiteracyLevel, string> = {
+  none: "None",
+  "a-little": "A Little",
+  beginner: "Beginner",
+  "intermediate-refreshing": "Intermediate but Refreshing",
+  "expert-refreshing": "Expert but Refreshing",
+};
+
+export interface PlacementQuizQuestion {
+  id: string;
+  prompt: string;
+  choices: string[];
+  correctIndex: number;
+}
+
+export interface PlacementQuizResult {
+  score: number;
+  totalCount: number;
+  computedLevel: LiteracyLevel;
+  completedAt: number;
+}
+
+export interface UserProfile {
+  name: string;
+  birthdate: string;
+  bio: string;
+  selfReportedLevel: LiteracyLevel | null;
+  placementQuiz: PlacementQuizResult | null;
+  onboardingBonusAwarded: boolean;
+}
+
+export interface Account {
+  username: string;
+  passwordHash: string;
+  salt: string;
+  createdAt: number;
 }
 
 export type MarketDifficulty = "calm" | "moderate" | "volatile" | "chaotic";
