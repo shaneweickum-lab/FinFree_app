@@ -91,3 +91,11 @@ export function findGlossaryNavTarget(glossaryKey: string): NavTarget | null {
     highlightIndex: bulletIndex !== undefined && bulletIndex >= 0 ? bulletIndex : undefined,
   };
 }
+
+/** Reverse of GLOSSARY_CONCEPT_LOCATIONS — given a lesson concept slug (e.g. from a missed quiz
+ * question), finds the GLOSSARY key that teaches it, so quiz assistance can reuse the same rich
+ * definition text instead of maintaining a second copy of it. */
+export function findGlossaryKeyForConcept(concept: string): string | null {
+  const entry = Object.entries(GLOSSARY_CONCEPT_LOCATIONS).find(([, location]) => location.concept === concept);
+  return entry ? entry[0] : null;
+}

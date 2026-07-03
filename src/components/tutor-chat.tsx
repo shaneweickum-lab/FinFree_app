@@ -1,13 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useProgress } from "@/lib/progress-context";
 import { useProfile } from "@/lib/profile-context";
 import { useTutor } from "@/lib/tutor-context";
 import { createAimlBot } from "@/lib/tutor/aiml-engine";
-import { TUTOR_CATEGORIES } from "@/lib/tutor/knowledge-base";
+import { TUTOR_CATEGORIES, buildQuizAssistanceMessage } from "@/lib/tutor/knowledge-base";
+import { getQuizGateState } from "@/lib/tutor/quiz-gate";
+
+const NO_CHEATING_REPLIES = [
+  "Sorry, no cheating during a test! Give it an honest shot — I'll be here if you need extra help after.",
+  "Nice try, but I can't help mid-quiz. Finish it up first!",
+];
 
 interface ChatMessage {
   id: string;
@@ -15,6 +21,8 @@ interface ChatMessage {
   text: string;
   /** Set when this reply also sent the user somewhere, so the bubble can say where it took them. */
   navigateLabel?: string;
+  /** Present on the Assisted Mode offer bubble until the user accepts or declines it. */
+  quizHelpOffer?: { quizId: string };
 }
 
 const SUGGESTED_QUESTIONS = ["What is a stop-loss?", "What's my Fin Coin balance?", "How am I doing?", "What is EBITDA?"];
@@ -31,10 +39,15 @@ function nextMessageId() {
   return `msg-${messageIdCounter}-${Math.floor(performance.now())}`;
 }
 
+function pickNoCheatingReply(): string {
+  return NO_CHEATING_REPLIES[Math.floor(Math.random() * NO_CHEATING_REPLIES.length)];
+}
+
 const bot = createAimlBot(TUTOR_CATEGORIES);
 
 export function TutorChat() {
   const router = useRouter();
+  const pathname = usePathname();
   const { username } = useAuth();
   const { progress } = useProgress();
   const { profile } = useProfile();
@@ -45,6 +58,9 @@ export function TutorChat() {
   const [draft, setDraft] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const announcedQuizIdsRef = useRef<Set<string>>(new Set());
+
+  const quizGate = getQuizGateState(pathname, progress);
 
   const storageKey = `finfree.tutorChat.v1.${username?.toLowerCase()}`;
 
@@ -72,9 +88,48 @@ export function TutorChat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open]);
 
+  // Assisted Mode: once a quiz has stumped the user enough times (Strict Mode's flat refusal no
+  // longer applies), the tutor pops the offer up on its own, in place — it never navigates the
+  // user away from the quiz screen to do it.
+  useEffect(() => {
+    if (!quizGate || quizGate.blocked) return;
+    if (announcedQuizIdsRef.current.has(quizGate.quizId)) return;
+    announcedQuizIdsRef.current.add(quizGate.quizId);
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextMessageId(),
+        role: "bot",
+        text: `Looks like "${quizGate.lessonTitle}" is giving you some trouble. Would you like some assistance?`,
+        quizHelpOffer: { quizId: quizGate.quizId },
+      },
+    ]);
+    setOpen(true);
+  }, [quizGate]);
+
+  function resolveQuizOffer(messageId: string, quizId: string, accepted: boolean) {
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, quizHelpOffer: undefined } : m)));
+    const reply = accepted
+      ? buildQuizAssistanceMessage(quizId, progress)
+      : "No worries — I'm still here if you change your mind. Just ask me anything.";
+    setMessages((prev) => [...prev, { id: nextMessageId(), role: "bot", text: reply }]);
+  }
+
   function ask(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    if (quizGate?.blocked) {
+      const reply = pickNoCheatingReply();
+      setMessages((prev) => [
+        ...prev,
+        { id: nextMessageId(), role: "user", text: trimmed },
+        { id: nextMessageId(), role: "bot", text: reply },
+      ]);
+      setDraft("");
+      return;
+    }
 
     const reply = bot.respond(trimmed, { progress, profile, tradeCritiques });
     setMessages((prev) => [
@@ -119,12 +174,28 @@ export function TutorChat() {
             {messages.map((m) => (
               <div
                 key={m.id}
-                className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+                className={`max-w-[85%] whitespace-pre-line rounded-xl px-3 py-2 text-sm ${
                   m.role === "user" ? "ml-auto bg-royal-purple text-white" : "bg-royal-purple/10 text-foreground"
                 }`}
               >
                 {m.text}
                 {m.navigateLabel && <p className="mt-1 text-xs italic opacity-70">📍 Opened {m.navigateLabel}</p>}
+                {m.quizHelpOffer && (
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => resolveQuizOffer(m.id, m.quizHelpOffer!.quizId, true)}
+                      className="rounded-full bg-money-green px-3 py-1 text-xs font-semibold text-white"
+                    >
+                      Yes, help me
+                    </button>
+                    <button
+                      onClick={() => resolveQuizOffer(m.id, m.quizHelpOffer!.quizId, false)}
+                      className="rounded-full border border-royal-purple/30 px-3 py-1 text-xs font-semibold text-royal-purple-dark"
+                    >
+                      No thanks
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
