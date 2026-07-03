@@ -1,13 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useProgress } from "@/lib/progress-context";
 import { useProfile } from "@/lib/profile-context";
 import { useTutor } from "@/lib/tutor-context";
 import { createAimlBot } from "@/lib/tutor/aiml-engine";
 import { TUTOR_CATEGORIES } from "@/lib/tutor/knowledge-base";
+import { getQuizGateState } from "@/lib/tutor/quiz-gate";
+
+const NO_CHEATING_REPLIES = [
+  "Sorry, no cheating during a test! Give it an honest shot — I'll be here if you need extra help after.",
+  "Nice try, but I can't help mid-quiz. Finish it up first!",
+];
 
 interface ChatMessage {
   id: string;
@@ -31,10 +37,15 @@ function nextMessageId() {
   return `msg-${messageIdCounter}-${Math.floor(performance.now())}`;
 }
 
+function pickNoCheatingReply(): string {
+  return NO_CHEATING_REPLIES[Math.floor(Math.random() * NO_CHEATING_REPLIES.length)];
+}
+
 const bot = createAimlBot(TUTOR_CATEGORIES);
 
 export function TutorChat() {
   const router = useRouter();
+  const pathname = usePathname();
   const { username } = useAuth();
   const { progress } = useProgress();
   const { profile } = useProfile();
@@ -45,6 +56,9 @@ export function TutorChat() {
   const [draft, setDraft] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const announcedQuizIdsRef = useRef<Set<string>>(new Set());
+
+  const quizGate = getQuizGateState(pathname, progress);
 
   const storageKey = `finfree.tutorChat.v1.${username?.toLowerCase()}`;
 
@@ -72,9 +86,38 @@ export function TutorChat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open]);
 
+  // Once a quiz has stumped the user enough times, the tutor stops refusing and offers to help —
+  // announced on its own rather than waiting for the user to ask again.
+  useEffect(() => {
+    if (!quizGate || quizGate.blocked) return;
+    if (announcedQuizIdsRef.current.has(quizGate.quizId)) return;
+    announcedQuizIdsRef.current.add(quizGate.quizId);
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextMessageId(),
+        role: "bot",
+        text: `Looks like "${quizGate.lessonTitle}" is giving you some trouble. Would you like some assistance? Ask me anything about it.`,
+      },
+    ]);
+    setOpen(true);
+  }, [quizGate]);
+
   function ask(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    if (quizGate?.blocked) {
+      const reply = pickNoCheatingReply();
+      setMessages((prev) => [
+        ...prev,
+        { id: nextMessageId(), role: "user", text: trimmed },
+        { id: nextMessageId(), role: "bot", text: reply },
+      ]);
+      setDraft("");
+      return;
+    }
 
     const reply = bot.respond(trimmed, { progress, profile, tradeCritiques });
     setMessages((prev) => [
