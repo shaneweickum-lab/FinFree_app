@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useProgress } from "@/lib/progress-context";
 import { useProfile } from "@/lib/profile-context";
@@ -12,6 +13,8 @@ interface ChatMessage {
   id: string;
   role: "user" | "bot";
   text: string;
+  /** Set when this reply also sent the user somewhere, so the bubble can say where it took them. */
+  navigateLabel?: string;
 }
 
 const SUGGESTED_QUESTIONS = ["What is a stop-loss?", "What's my Fin Coin balance?", "How am I doing?", "What is EBITDA?"];
@@ -31,6 +34,7 @@ function nextMessageId() {
 const bot = createAimlBot(TUTOR_CATEGORIES);
 
 export function TutorChat() {
+  const router = useRouter();
   const { username } = useAuth();
   const { progress } = useProgress();
   const { profile } = useProfile();
@@ -76,9 +80,17 @@ export function TutorChat() {
     setMessages((prev) => [
       ...prev,
       { id: nextMessageId(), role: "user", text: trimmed },
-      { id: nextMessageId(), role: "bot", text: reply },
+      { id: nextMessageId(), role: "bot", text: reply.text, navigateLabel: reply.navigate?.label },
     ]);
     setDraft("");
+
+    if (reply.navigate) {
+      const url =
+        reply.navigate.highlightIndex !== undefined
+          ? `${reply.navigate.path}?highlight=${reply.navigate.highlightIndex}`
+          : reply.navigate.path;
+      router.push(url);
+    }
   }
 
   function handleSubmit(e: FormEvent) {
@@ -112,6 +124,7 @@ export function TutorChat() {
                 }`}
               >
                 {m.text}
+                {m.navigateLabel && <p className="mt-1 text-xs italic opacity-70">📍 Opened {m.navigateLabel}</p>}
               </div>
             ))}
           </div>

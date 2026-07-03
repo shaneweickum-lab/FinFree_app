@@ -21,6 +21,19 @@ export interface MatchContext {
 
 export type Template<TExtra> = string | ((ctx: MatchContext & TExtra) => string);
 
+/** A page the bot can send the user to, so an answer doesn't just sit in the chat panel when the
+ * material actually lives somewhere in the app (a lesson, the Trading Floor, etc). */
+export interface NavTarget {
+  /** App-relative path, e.g. "/modules/m1/lessons/m1-l1". */
+  path: string;
+  /** Shown in the chat bubble, e.g. "Module 1 — Revenue, Profit & Cash Flow". */
+  label: string;
+  /** Index into the target lesson's bulletPoints array to scroll to and highlight, if known. */
+  highlightIndex?: number;
+}
+
+export type NavigateFn<TExtra> = (ctx: MatchContext & TExtra) => NavTarget | null | undefined;
+
 export interface AimlCategory<TExtra> {
   /** Space-separated words; `*` matches one-or-more words (low priority), `_` matches
    * one-or-more words (higher priority, matched before `*` on ties). Case-insensitive. */
@@ -32,6 +45,13 @@ export interface AimlCategory<TExtra> {
   /** A few templates to pick from at random, for the small-talk categories that would feel
    * robotic if they always said exactly the same thing. */
   randomTemplates?: Template<TExtra>[];
+  /** Optional page to send the user to alongside the template's text answer. */
+  navigate?: NavigateFn<TExtra>;
+}
+
+export interface BotReply {
+  text: string;
+  navigate?: NavTarget;
 }
 
 interface CompiledToken {
@@ -111,11 +131,18 @@ export function createAimlBot<TExtra>(categories: AimlCategory<TExtra>[]) {
   const compiled = compile(categories);
   const byPattern = new Map(categories.map((c) => [normalize(c.pattern), c]));
 
-  function renderTemplate(category: AimlCategory<TExtra>, ctx: MatchContext & TExtra): string | null {
+  /** Follows the redirectTo chain (AIML's <srai>) to the category that actually holds the
+   * template/navigate to use for rendering — a redirect's own navigate/template, if any, would be
+   * unreachable dead weight, so redirects always defer fully to their target. */
+  function resolveFinal(category: AimlCategory<TExtra>): AimlCategory<TExtra> {
     if (category.redirectTo) {
       const target = byPattern.get(normalize(category.redirectTo));
-      if (target) return renderTemplate(target, ctx);
+      if (target) return resolveFinal(target);
     }
+    return category;
+  }
+
+  function renderText(category: AimlCategory<TExtra>, ctx: MatchContext & TExtra): string | null {
     if (category.randomTemplates && category.randomTemplates.length > 0) {
       const pick = category.randomTemplates[Math.floor(Math.random() * category.randomTemplates.length)];
       return typeof pick === "function" ? pick(ctx) : pick;
@@ -126,7 +153,14 @@ export function createAimlBot<TExtra>(categories: AimlCategory<TExtra>[]) {
     return null;
   }
 
-  function respond(rawInput: string, extra: TExtra): string {
+  function render(category: AimlCategory<TExtra>, ctx: MatchContext & TExtra): BotReply {
+    const final = resolveFinal(category);
+    const text = renderText(final, ctx) ?? "I'm not sure how to answer that yet.";
+    const navigate = final.navigate?.(ctx) ?? undefined;
+    return navigate ? { text, navigate } : { text };
+  }
+
+  function respond(rawInput: string, extra: TExtra): BotReply {
     const normalized = normalize(rawInput);
     const words = normalized.split(" ").filter(Boolean);
 
@@ -146,12 +180,12 @@ export function createAimlBot<TExtra>(categories: AimlCategory<TExtra>[]) {
 
     if (!best) {
       const fallback = byPattern.get("*");
-      if (!fallback) return "I'm not sure how to answer that yet.";
-      return renderTemplate(fallback, { wildcards: [], input: normalized, ...extra }) ?? "I'm not sure how to answer that yet.";
+      if (!fallback) return { text: "I'm not sure how to answer that yet." };
+      return render(fallback, { wildcards: [], input: normalized, ...extra });
     }
 
     const ctx: MatchContext & TExtra = { wildcards: best.attempt.wildcards, input: normalized, ...extra };
-    return renderTemplate(best.compiled.category, ctx) ?? "I'm not sure how to answer that yet.";
+    return render(best.compiled.category, ctx);
   }
 
   return { respond };

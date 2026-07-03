@@ -1,10 +1,11 @@
-import type { AimlCategory, MatchContext } from "./aiml-engine";
+import type { AimlCategory, MatchContext, NavTarget } from "./aiml-engine";
 import { computeTradingLevel } from "../trading-levels";
 import { computeOverallMasteryScore } from "../adaptive";
 import { MODULES } from "../content";
 import { LITERACY_LEVEL_LABELS } from "../types";
 import type { UserProfile, UserProgress } from "../types";
 import type { TradeCritique } from "./trade-quality";
+import { findGlossaryNavTarget } from "./content-lookup";
 
 export interface TutorChatContext {
   progress: UserProgress;
@@ -62,20 +63,32 @@ const GLOSSARY_ALIASES: Record<string, string> = {
   "MARKET CAPITALIZATION": "MARKET CAP",
 };
 
-/** Resolves a glossary entry by exact key, alias, or a leading article / trailing filler word
- * (e.g. "a stop loss" or "stop loss order" should both resolve to the "STOP LOSS" entry). */
-function lookupGlossary(rawTerm: string): string | null {
+/** Resolves a raw wildcard capture (e.g. "a stop loss" or "stop loss order") to the canonical
+ * GLOSSARY key it refers to, by exact key, alias, leading article, or trailing filler word. Both
+ * the definition text and the "where is this taught" lookup key off of this same resolution so
+ * they never disagree about which term was actually meant. */
+function resolveGlossaryKey(rawTerm: string): string | null {
   const term = rawTerm.trim().replace(/^(A|AN|THE)\s+/, "");
-  const exact = GLOSSARY[term] ?? GLOSSARY[GLOSSARY_ALIASES[term]];
-  if (exact) return exact;
+  if (GLOSSARY[term]) return term;
+  if (GLOSSARY_ALIASES[term] && GLOSSARY[GLOSSARY_ALIASES[term]]) return GLOSSARY_ALIASES[term];
 
   const keys = [...Object.keys(GLOSSARY), ...Object.keys(GLOSSARY_ALIASES)].sort((a, b) => b.length - a.length);
   for (const key of keys) {
     if (new RegExp(`(^|\\s)${key}(\\s|$)`).test(term)) {
-      return GLOSSARY[key] ?? GLOSSARY[GLOSSARY_ALIASES[key]];
+      return GLOSSARY[key] ? key : GLOSSARY_ALIASES[key];
     }
   }
   return null;
+}
+
+function lookupGlossary(rawTerm: string): string | null {
+  const key = resolveGlossaryKey(rawTerm);
+  return key ? GLOSSARY[key] : null;
+}
+
+function lookupGlossaryNav(rawTerm: string): NavTarget | null {
+  const key = resolveGlossaryKey(rawTerm);
+  return key ? findGlossaryNavTarget(key) : null;
 }
 
 function formatCoin(n: number): string {
@@ -176,6 +189,7 @@ export const TUTOR_CATEGORIES: AimlCategory<TutorChatContext>[] = [
       ctx.profile.selfReportedLevel
         ? `Your profile lists your financial literacy level as "${LITERACY_LEVEL_LABELS[ctx.profile.selfReportedLevel]}".`
         : "You haven't set a financial literacy level yet — you can do that, and take the placement quiz, from your Profile page.",
+    navigate: () => ({ path: "/profile", label: "Profile" }),
   },
 
   {
@@ -194,6 +208,7 @@ export const TUTOR_CATEGORIES: AimlCategory<TutorChatContext>[] = [
   {
     pattern: "WHAT ARE ACHIEVEMENTS",
     template: "Achievements are milestones across onboarding, learning, Fin Coin, and trading — check the Achievements page to see which you've unlocked.",
+    navigate: () => ({ path: "/achievements", label: "Achievements" }),
   },
   { pattern: "WHAT IS AN ACHIEVEMENT", redirectTo: "WHAT ARE ACHIEVEMENTS" },
 
@@ -201,6 +216,7 @@ export const TUTOR_CATEGORIES: AimlCategory<TutorChatContext>[] = [
     pattern: "WHAT IS THE TRADING FLOOR",
     template:
       "The Trading Floor is a simulated stock market where you trade using Fin Coin instead of real money, with zero real-world risk.",
+    navigate: () => ({ path: "/trading-floor", label: "Trading Floor" }),
   },
   { pattern: "WHAT IS THE TRADING FLOOR SIMULATION", redirectTo: "WHAT IS THE TRADING FLOOR" },
 
@@ -219,21 +235,28 @@ export const TUTOR_CATEGORIES: AimlCategory<TutorChatContext>[] = [
   { pattern: "HOW DO I MAKE FIN COIN", redirectTo: "HOW DO I EARN FIN COIN" },
 
   // ---- Glossary wildcard fallback: covers any term not given its own category above ----
+  // Each also offers a `navigate` target — if the term is taught in a lesson, the chat sends the
+  // user there and highlights the exact line, instead of leaving the definition stranded in the
+  // chat panel.
   {
     pattern: "WHAT IS *",
     template: (ctx: Ctx) => lookupGlossary(ctx.wildcards[0]) ?? `I don't have a definition for "${ctx.wildcards[0].toLowerCase()}" yet.`,
+    navigate: (ctx: Ctx) => lookupGlossaryNav(ctx.wildcards[0]),
   },
   {
     pattern: "WHAT ARE *",
     template: (ctx: Ctx) => lookupGlossary(ctx.wildcards[0]) ?? `I don't have a definition for "${ctx.wildcards[0].toLowerCase()}" yet.`,
+    navigate: (ctx: Ctx) => lookupGlossaryNav(ctx.wildcards[0]),
   },
   {
     pattern: "WHAT DOES * MEAN",
     template: (ctx: Ctx) => lookupGlossary(ctx.wildcards[0]) ?? `I don't have a definition for "${ctx.wildcards[0].toLowerCase()}" yet.`,
+    navigate: (ctx: Ctx) => lookupGlossaryNav(ctx.wildcards[0]),
   },
   {
     pattern: "DEFINE *",
     template: (ctx: Ctx) => lookupGlossary(ctx.wildcards[0]) ?? `I don't have a definition for "${ctx.wildcards[0].toLowerCase()}" yet.`,
+    navigate: (ctx: Ctx) => lookupGlossaryNav(ctx.wildcards[0]),
   },
 
   // ---- Ultimate fallback ----
