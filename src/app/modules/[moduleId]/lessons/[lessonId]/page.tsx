@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { notFound, useParams } from "next/navigation";
+import { notFound, useParams, useSearchParams } from "next/navigation";
 import { getLesson, getLessonsByModule, getModule } from "@/lib/content";
 import { useProgress } from "@/lib/progress-context";
 import { getLessonStatus } from "@/lib/module-status";
@@ -10,9 +11,13 @@ import { QuizRunner } from "@/components/quiz-runner";
 
 export default function LessonPage() {
   const params = useParams<{ moduleId: string; lessonId: string }>();
+  const searchParams = useSearchParams();
   const mod = getModule(params.moduleId);
   const lesson = getLesson(params.lessonId);
   const { progress, hydrated, isLessonComplete, completeLesson } = useProgress();
+
+  const highlightParam = searchParams.get("highlight");
+  const highlightIndex = highlightParam !== null && highlightParam !== "" ? Number(highlightParam) : null;
 
   if (!mod || !lesson || lesson.moduleId !== mod.id) return notFound();
 
@@ -56,7 +61,12 @@ export default function LessonPage() {
         ) : lesson.type === "minigame" ? (
           <MiniGameBody lessonComplete={complete} onComplete={() => completeLesson(lesson)} lesson={lesson} />
         ) : (
-          <ExplanatoryOrInteractiveBody lessonComplete={complete} onComplete={() => completeLesson(lesson)} lesson={lesson} />
+          <ExplanatoryOrInteractiveBody
+            lessonComplete={complete}
+            onComplete={() => completeLesson(lesson)}
+            lesson={lesson}
+            highlightIndex={highlightIndex}
+          />
         )}
       </div>
 
@@ -84,11 +94,26 @@ function ExplanatoryOrInteractiveBody({
   lesson,
   lessonComplete,
   onComplete,
+  highlightIndex,
 }: {
   lesson: ReturnType<typeof getLesson>;
   lessonComplete: boolean;
   onComplete: () => void;
+  highlightIndex: number | null;
 }) {
+  const bulletRefs = useRef<(HTMLLIElement | null)[]>([]);
+  const [pulsingIndex, setPulsingIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (highlightIndex === null) return;
+    const el = bulletRefs.current[highlightIndex];
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setPulsingIndex(highlightIndex);
+    const timeout = setTimeout(() => setPulsingIndex(null), 2500);
+    return () => clearTimeout(timeout);
+  }, [highlightIndex]);
+
   if (!lesson) return null;
   const isInteractive = lesson.type === "interactive";
 
@@ -97,7 +122,15 @@ function ExplanatoryOrInteractiveBody({
       {lesson.bulletPoints.length > 0 && (
         <ul className="space-y-2 rounded-2xl bg-royal-purple/5 p-4">
           {lesson.bulletPoints.map((point, i) => (
-            <li key={i} className="flex gap-2 text-sm text-foreground/80">
+            <li
+              key={i}
+              ref={(el) => {
+                bulletRefs.current[i] = el;
+              }}
+              className={`flex gap-2 rounded-lg px-2 py-1 text-sm text-foreground/80 transition-colors duration-500 ${
+                pulsingIndex === i ? "bg-rich-gold/40 ring-2 ring-rich-gold" : ""
+              }`}
+            >
               <span aria-hidden className="text-royal-purple">•</span>
               {point}
             </li>
